@@ -1,0 +1,386 @@
+services:
+  # ==========================================
+  # ROUTERS
+  # ==========================================
+  hq:
+    build:
+      context: .
+      dockerfile: Dockerfile.router
+    image: multi-branch-frr:latest
+    hostname: HQ
+    container_name: lab-hq
+    privileged: true
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    volumes:
+      - ./configs/daemons:/etc/frr/daemons:ro
+      - ./configs/hq/frr.conf:/etc/frr/frr.conf:ro
+      - ./configs/hq/setup.sh:/etc/frr/setup.sh:ro
+    entrypoint: ["/bin/sh", "/etc/frr/setup.sh"]
+    networks:
+      hq_vlan10:
+        ipv4_address: 192.168.1.1
+      hq_vlan20:
+        ipv4_address: 192.168.2.1
+      hq_vlan30:
+        ipv4_address: 192.168.3.1
+      hq_vlan40:
+        ipv4_address: 192.168.4.1
+      hq_vlan100:
+        ipv4_address: 192.168.5.1
+      wan_hq_br1:
+        ipv4_address: 172.20.10.2
+      wan_hq_br2:
+        ipv4_address: 172.20.20.2
+
+  br1:
+    build:
+      context: .
+      dockerfile: Dockerfile.router
+    image: multi-branch-frr:latest
+    hostname: BR1
+    container_name: lab-br1
+    privileged: true
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    volumes:
+      - ./configs/daemons:/etc/frr/daemons:ro
+      - ./configs/br1/frr.conf:/etc/frr/frr.conf:ro
+      - ./configs/br1/setup.sh:/etc/frr/setup.sh:ro
+    entrypoint: ["/bin/sh", "/etc/frr/setup.sh"]
+    networks:
+      br1_vlan10:
+        ipv4_address: 192.168.11.1
+      br1_vlan20:
+        ipv4_address: 192.168.12.1
+      br1_vlan30:
+        ipv4_address: 192.168.13.1
+      wan_hq_br1:
+        ipv4_address: 172.20.10.3
+      wan_br1_br2:
+        ipv4_address: 172.20.30.2
+
+  br2:
+    build:
+      context: .
+      dockerfile: Dockerfile.router
+    image: multi-branch-frr:latest
+    hostname: BR2
+    container_name: lab-br2
+    privileged: true
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    volumes:
+      - ./configs/daemons:/etc/frr/daemons:ro
+      - ./configs/br2/frr.conf:/etc/frr/frr.conf:ro
+      - ./configs/br2/setup.sh:/etc/frr/setup.sh:ro
+    entrypoint: ["/bin/sh", "/etc/frr/setup.sh"]
+    networks:
+      br2_vlan10:
+        ipv4_address: 192.168.21.1
+      br2_vlan20:
+        ipv4_address: 192.168.22.1
+      br2_vlan30:
+        ipv4_address: 192.168.23.1
+      wan_hq_br2:
+        ipv4_address: 172.20.20.3
+      wan_br1_br2:
+        ipv4_address: 172.20.30.3
+
+  # ==========================================
+  # HQ END-DEVICES & SERVERS
+  # ==========================================
+  pc-hq-hr:
+    image: alpine:3.20
+    hostname: PC-HQ-HR
+    container_name: lab-pc-hq-hr
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.1.1; sleep infinity"]
+    networks:
+      hq_vlan10:
+        ipv4_address: 192.168.1.100
+    depends_on: [hq]
+
+  pc-hq-finance:
+    image: alpine:3.20
+    hostname: PC-HQ-Finance
+    container_name: lab-pc-hq-finance
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.2.1; sleep infinity"]
+    networks:
+      hq_vlan20:
+        ipv4_address: 192.168.2.100
+    depends_on: [hq]
+
+  pc-hq-it:
+    image: alpine:3.20
+    hostname: PC-HQ-IT
+    container_name: lab-pc-hq-it
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.3.1; sleep infinity"]
+    networks:
+      hq_vlan30:
+        ipv4_address: 192.168.3.100
+    depends_on: [hq]
+
+  pc-hq-admin:
+    image: alpine:3.20
+    hostname: PC-HQ-Admin
+    container_name: lab-pc-hq-admin
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.4.1; sleep infinity"]
+    networks:
+      hq_vlan40:
+        ipv4_address: 192.168.4.100
+    depends_on: [hq]
+
+  srv-dhcp:
+    image: alpine:3.20
+    hostname: DHCP-Server
+    container_name: lab-srv-dhcp
+    cap_add: [NET_ADMIN]
+    volumes:
+      - ./configs/dhcp/dnsmasq.conf:/etc/dnsmasq.conf:ro
+    command: ["sh", "-c", "apk add --no-cache dnsmasq >/dev/null 2>&1; ip route replace default via 192.168.5.1; dnsmasq -k -C /etc/dnsmasq.conf"]
+    networks:
+      hq_vlan100:
+        ipv4_address: 192.168.5.10
+    depends_on: [hq]
+
+  srv-web:
+    image: alpine:3.20
+    hostname: DNS-Web-Server
+    container_name: lab-srv-web
+    cap_add: [NET_ADMIN]
+    volumes:
+      - ./configs/web:/var/www:ro
+    command: ["sh", "-c", "apk add --no-cache darkhttpd >/dev/null 2>&1; ip route replace default via 192.168.5.1; darkhttpd /var/www --port 80"]
+    networks:
+      hq_vlan100:
+        ipv4_address: 192.168.5.20
+    depends_on: [hq]
+
+  # ==========================================
+  # BRANCH 1 END-DEVICES
+  # ==========================================
+  pc-br1-hr:
+    image: alpine:3.20
+    hostname: PC-BR1-HR
+    container_name: lab-pc-br1-hr
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.11.1; sleep infinity"]
+    networks:
+      br1_vlan10:
+        ipv4_address: 192.168.11.100
+    depends_on: [br1]
+
+  pc-br1-finance:
+    image: alpine:3.20
+    hostname: PC-BR1-Finance
+    container_name: lab-pc-br1-finance
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.12.1; sleep infinity"]
+    networks:
+      br1_vlan20:
+        ipv4_address: 192.168.12.100
+    depends_on: [br1]
+
+  pc-br1-it:
+    image: alpine:3.20
+    hostname: PC-BR1-IT
+    container_name: lab-pc-br1-it
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.13.1; sleep infinity"]
+    networks:
+      br1_vlan30:
+        ipv4_address: 192.168.13.100
+    depends_on: [br1]
+
+  # ==========================================
+  # BRANCH 2 END-DEVICES
+  # ==========================================
+  pc-br2-hr:
+    image: alpine:3.20
+    hostname: PC-BR2-HR
+    container_name: lab-pc-br2-hr
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.21.1; sleep infinity"]
+    networks:
+      br2_vlan10:
+        ipv4_address: 192.168.21.100
+    depends_on: [br2]
+
+  pc-br2-finance:
+    image: alpine:3.20
+    hostname: PC-BR2-Finance
+    container_name: lab-pc-br2-finance
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.22.1; sleep infinity"]
+    networks:
+      br2_vlan20:
+        ipv4_address: 192.168.22.100
+    depends_on: [br2]
+
+  pc-br2-it:
+    image: alpine:3.20
+    hostname: PC-BR2-IT
+    container_name: lab-pc-br2-it
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "ip route replace default via 192.168.23.1; sleep infinity"]
+    networks:
+      br2_vlan30:
+        ipv4_address: 192.168.23.100
+    depends_on: [br2]
+
+  # ==========================================
+  # PACKET CAPTURE (BR1)
+  # ==========================================
+  capture:
+    image: nicolaka/netshoot:latest
+    container_name: lab-capture
+    network_mode: "service:br1"
+    depends_on: [br1]
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./captures:/captures
+    command:
+      - tcpdump
+      - -i
+      - any
+      - -U
+      - -w
+      - /captures/branch1-all.pcap
+
+  # ==========================================
+  # PACKET CAPTURE (HQ)
+  # ==========================================
+  capture-hq:
+    image: nicolaka/netshoot:latest
+    container_name: lab-capture-hq
+    network_mode: "service:hq"
+    depends_on: [hq]
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./captures:/captures
+    command:
+      - tcpdump
+      - -i
+      - any
+      - -U
+      - -w
+      - /captures/hq-all.pcap
+
+  # ==========================================
+  # PACKET CAPTURE (BR2)
+  # ==========================================
+  capture-br2:
+    image: nicolaka/netshoot:latest
+    container_name: lab-capture-br2
+    network_mode: "service:br2"
+    depends_on: [br2]
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./captures:/captures
+    command:
+      - tcpdump
+      - -i
+      - any
+      - -U
+      - -w
+      - /captures/branch2-all.pcap
+
+
+# ==========================================
+# NETWORKS (VLANs & WAN Links)
+# ==========================================
+networks:
+  # HQ VLANs
+  hq_vlan10:
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24
+          gateway: 192.168.1.254
+
+  hq_vlan20:
+    ipam:
+      config:
+        - subnet: 192.168.2.0/24
+          gateway: 192.168.2.254
+
+  hq_vlan30:
+    ipam:
+      config:
+        - subnet: 192.168.3.0/24
+          gateway: 192.168.3.254
+
+  hq_vlan40:
+    ipam:
+      config:
+        - subnet: 192.168.4.0/24
+          gateway: 192.168.4.254
+
+  hq_vlan100:
+    ipam:
+      config:
+        - subnet: 192.168.5.0/24
+          gateway: 192.168.5.254
+
+  # Branch 1 VLANs
+  br1_vlan10:
+    ipam:
+      config:
+        - subnet: 192.168.11.0/24
+          gateway: 192.168.11.254
+
+  br1_vlan20:
+    ipam:
+      config:
+        - subnet: 192.168.12.0/24
+          gateway: 192.168.12.254
+
+  br1_vlan30:
+    ipam:
+      config:
+        - subnet: 192.168.13.0/24
+          gateway: 192.168.13.254
+
+  # Branch 2 VLANs
+  br2_vlan10:
+    ipam:
+      config:
+        - subnet: 192.168.21.0/24
+          gateway: 192.168.21.254
+
+  br2_vlan20:
+    ipam:
+      config:
+        - subnet: 192.168.22.0/24
+          gateway: 192.168.22.254
+
+  br2_vlan30:
+    ipam:
+      config:
+        - subnet: 192.168.23.0/24
+          gateway: 192.168.23.254
+
+  # WAN Links (Re-addressed to Cisco /30 subnets by router setup scripts)
+  wan_hq_br1:
+    ipam:
+      config:
+        - subnet: 172.20.10.0/24
+          gateway: 172.20.10.254
+
+  wan_hq_br2:
+    ipam:
+      config:
+        - subnet: 172.20.20.0/24
+          gateway: 172.20.20.254
+
+  wan_br1_br2:
+    ipam:
+      config:
+        - subnet: 172.20.30.0/24
+          gateway: 172.20.30.254
