@@ -89,3 +89,10 @@ Implemented via Linux `iptables` mirroring Cisco IOS ACLs:
    docker compose stop capture
    docker compose down
    ```
+
+---
+
+## Verification Screenshots & Academic Report
+
+- **Screenshots Gallery & Descriptions:** See [`screenshots/README.md`](screenshots/README.md) for full-resolution captures of all 10 project milestones and detailed architectural explanations.
+- **Academic Network Engineering Report:** See [`docs/REPORT.md`](docs/REPORT.md) for the complete design specification, IP addressing plan, OSPF configuration, security policy matrix, and screenshot checklist.
