@@ -1,244 +1,246 @@
 # Multi-Branch Secure Network Lab: Demonstration & Verification Guide
 
-This guide provides step-by-step commands to demonstrate, test, and verify the Docker-based multi-branch enterprise network lab. Every command in this guide has been verified against the active project environment.
+This guide provides a structured, presentation-ready demonstration walkthrough for the **Multi-Branch Enterprise Network**. It covers pre-flight checks, dynamic routing verification (OSPF & ECMP), cross-branch connectivity, Cisco Extended ACL policy enforcement, live traffic generation, and packet-level inspection in Wireshark.
 
 ---
 
-## 1. Environment & Container Status
+## 1. Demo Pre-Flight Checklist
+
+Before presenting, arrange the following windows on your desktop:
+1. **Terminal Window:** Rooted at the project directory (`~/Desktop/Multi-Branch Enterprise Network`).
+2. **Visual Reference Window:** Cisco Packet Tracer topology (`cisco packet tracer network/Secure_Multi_Branch_Network.pkt`) or the [`screenshots/README.md`](../screenshots/README.md) gallery.
+3. **Wireshark Window:** Ready to open or reload the active packet captures (`captures/branch1-all.pcap`).
 
 ### 1.1 Check All Active Containers
-The topology runs 16 containers: 3 FRRouting routers, 10 department end-user PCs, 2 central infrastructure servers (DHCP & Web/DNS), and 1 continuous packet capture container.
+The topology runs 18 containers: 3 FRRouting routers, 10 departmental client PCs, 2 central infrastructure servers (DHCP & Web/DNS), and 3 continuous packet capture containers.
 
 ```bash
 docker compose ps
 ```
 
-**Expected Status:** All 16 containers should show `Up` status:
-- Routers: `lab-hq`, `lab-br1`, `lab-br2`
-- HQ Clients & Servers: `lab-pc-hq-hr`, `lab-pc-hq-finance`, `lab-pc-hq-it`, `lab-pc-hq-admin`, `lab-srv-dhcp`, `lab-srv-web`
-- Branch 1 Clients: `lab-pc-br1-hr`, `lab-pc-br1-finance`, `lab-pc-br1-it`
-- Branch 2 Clients: `lab-pc-br2-hr`, `lab-pc-br2-finance`, `lab-pc-br2-it`
-- Capture Service: `lab-capture`
+**Expected Status:** All 18 containers should display `Up`:
+- **Routers:** `lab-hq`, `lab-br1`, `lab-br2`
+- **HQ Clients & Servers:** `lab-pc-hq-hr`, `lab-pc-hq-finance`, `lab-pc-hq-it`, `lab-pc-hq-admin`, `lab-srv-dhcp`, `lab-srv-web`
+- **Branch 1 Clients:** `lab-pc-br1-hr`, `lab-pc-br1-finance`, `lab-pc-br1-it`
+- **Branch 2 Clients:** `lab-pc-br2-hr`, `lab-pc-br2-finance`, `lab-pc-br2-it`
+- **Capture Services:** `lab-capture` (BR1), `lab-capture-hq`, `lab-capture-br2`
 
 ---
 
-## 2. OSPF Dynamic Routing Verification
+## 2. Recommended 7-Minute Demo Presentation Flow
 
-Each router runs FRRouting (`vtysh`) with OSPFv2 in Area 0 over point-to-point `/30` WAN links.
+```mermaid
+flowchart LR
+    A["1. Intro & Architecture<br/>(1 min)"] --> B["2. OSPF & ECMP<br/>(1.5 min)"]
+    B --> C["3. Cross-Branch Traffic<br/>(1.5 min)"]
+    C --> D["4. Security ACLs<br/>(1.5 min)"]
+    D --> E["5. Wireshark Forensics<br/>(1 min)"]
+    E --> F["6. Automated Suite<br/>(30 sec)"]
+```
 
-### 2.1 Verify OSPF Neighbor Adjacencies
+---
 
-Check that all three routers form full OSPF adjacencies across the triangle WAN mesh:
+## 3. Step-by-Step Technical Demonstration
 
+### 3.1 Step 1: Dynamic Routing & Equal-Cost Multi-Path (ECMP)
+Each router runs FRRouting (`vtysh`) with OSPFv2 in Area 0 over point-to-point `/30` WAN subnets.
+
+#### Check HQ OSPF Neighbors
 ```bash
-# Check HQ Neighbors (Expect Full adjacency with BR1 2.2.2.2 and BR2 3.3.3.3)
 docker exec lab-hq vtysh -c "show ip ospf neighbor"
+```
+- **What to Highlight:** Both remote branch routers (`2.2.2.2` and `3.3.3.3`) in `Full/DR` state. Dead timers count down from 40s and reset every 10s upon receipt of Hellos.
 
-# Check Branch 1 Neighbors (Expect Full adjacency with HQ 1.1.1.1 and BR2 3.3.3.3)
+#### Check Full-Mesh WAN Adjacencies
+```bash
+# Branch 1
 docker exec lab-br1 vtysh -c "show ip ospf neighbor"
 
-# Check Branch 2 Neighbors (Expect Full adjacency with HQ 1.1.1.1 and BR1 2.2.2.2)
+# Branch 2
 docker exec lab-br2 vtysh -c "show ip ospf neighbor"
 ```
+- **What to Highlight:** Branch 1 maintains active peering with HQ (`1.1.1.1`) and Branch 2 (`3.3.3.3`) over the dedicated inter-branch WAN link `10.10.10.8/30`, proving a resilient full-mesh topology.
 
-**What to look for:**
-- `State`: Must display `Full/DR` or `Full/Backup`.
-- `Dead Time`: Regularly resetting before expiring (~30s–40s).
-- `Neighbor ID`: `1.1.1.1` (HQ), `2.2.2.2` (BR1), `3.3.3.3` (BR2).
-
-### 2.2 Verify OSPF Routing Tables
-
-Inspect the routes learned dynamically via OSPF (`O` routes):
-
+#### Highlight Equal-Cost Multi-Path (ECMP) on HQ
 ```bash
-# View OSPF routes on HQ
 docker exec lab-hq vtysh -c "show ip route ospf"
-
-# View OSPF routes on Branch 1
-docker exec lab-br1 vtysh -c "show ip route ospf"
-
-# View OSPF routes on Branch 2
-docker exec lab-br2 vtysh -c "show ip route ospf"
 ```
-
-**Key Routing Observations to Highlight in Demo:**
-1. **ECMP (Equal-Cost Multi-Path):**
-   - On `lab-hq`, link `10.10.10.8/30` (the WAN link between BR1 and BR2) is learned via both `10.10.10.2` (BR1) and `10.10.10.6` (BR2) with equal metric `[110/20]`.
-2. **Branch Subnet Distribution:**
-   - HQ learns Branch 1 subnets (`192.168.11.0/24`, `12.0/24`, `13.0/24`) via next-hop `10.10.10.2`.
-   - HQ learns Branch 2 subnets (`192.168.21.0/24`, `22.0/24`, `23.0/24`) via next-hop `10.10.10.6`.
-   - Branch 1 and Branch 2 learn all HQ subnets (`192.168.1.0/24` through `5.0/24`) dynamically.
+- **Key Observation to Highlight:** The route to `10.10.10.8/30` installs **two concurrent next-hops** with identical metric `[110/20]`:
+  - `via 10.10.10.2, eth4` (path through Branch 1)
+  - `via 10.10.10.6, eth5` (path through Branch 2)  
+  *Speaker Note:* *"OSPF installs both paths simultaneously in the kernel FIB for dynamic load sharing and sub-second link failover."*
 
 ---
 
-## 3. End-to-End Connectivity & Service Access
+### 3.2 Step 2: Cross-Branch Data Plane & Application Delivery
 
-### 3.1 Local Gateway Reachability
-Verify that end-user containers can reach their default gateway router:
-
+#### Inter-Branch Cross-Site Connectivity
 ```bash
-# HQ HR to HQ Gateway (192.168.1.1)
-docker exec lab-pc-hq-hr ping -c 2 192.168.1.1
-```
-
-### 3.2 Inter-Branch Cross-Site Connectivity
-Verify routing across the OSPF WAN backbone between distinct branches:
-
-```bash
-# HQ HR (192.168.1.100) -> Branch 1 HR (192.168.11.100)
-docker exec lab-pc-hq-hr ping -c 2 192.168.11.100
-
 # HQ HR (192.168.1.100) -> Branch 2 HR (192.168.21.100)
-docker exec lab-pc-hq-hr ping -c 2 192.168.21.100
-
-# Branch 1 IT (192.168.13.100) -> Branch 2 IT (192.168.23.100)
-docker exec lab-pc-br1-it ping -c 2 192.168.23.100
-
-# Branch 2 HR (192.168.21.100) -> HQ HR (192.168.1.100)
-docker exec lab-pc-br2-hr ping -c 2 192.168.1.100
+docker exec lab-pc-hq-hr ping -c 3 192.168.21.100
 ```
+- **What to Highlight:** **0% packet loss** and **`ttl=62`**.
+- *Speaker Note:* *"Linux client packets originate with TTL 64. Arriving at TTL 62 mathematically proves the packet crossed exactly two routing hops (HQ Core and Branch 2 Gateway) across the WAN."*
 
-### 3.3 Central Intranet Web Portal Access
-Test HTTP access to the corporate intranet hosted in HQ VLAN 100 (`192.168.5.20`):
-
+#### Central Corporate Intranet Web Portal Access
 ```bash
-# Branch 2 IT pinging the Web Server
-docker exec lab-pc-br2-it ping -c 2 192.168.5.20
-
-# Branch 1 HR fetching HTTP content via wget
+# Fetch corporate portal from Branch 1 HR PC
 docker exec lab-pc-br1-hr wget -qO- http://192.168.5.20
 ```
-
-**Expected Result:** The command returns HTML containing `<title>Enterprise Multi-Branch Intranet</title>` and the portal dashboard.
+- **What to Highlight:** HTTP 200 OK returning HTML with `<title>Enterprise Multi-Branch Intranet</title>` and corporate server metadata.
 
 ---
 
-## 4. Security & Access Control List (ACL) Verification
+### 3.3 Step 3: Zero Trust Security & Cisco Extended ACL Enforcement
+The lab implements Cisco Extended Access Control Lists via Linux kernel `iptables` rules on the routers.
 
-The lab replicates Cisco IOS Extended ACLs using Linux kernel `iptables` FORWARD rules to isolate sensitive departments.
-
-### 4.1 Permitted Traffic (Baseline)
-Verify that traffic between unrestricted departments passes freely:
-
+#### 1. Baseline: Permitted Departmental Traffic
 ```bash
-# HQ HR (192.168.1.100) -> HQ IT (192.168.3.100) [Traffic Permitted]
+# HQ HR (192.168.1.100) -> HQ IT (192.168.3.100)
 docker exec lab-pc-hq-hr ping -c 2 192.168.3.100
 ```
-**Expected Result:** 0% packet loss.
+- **Status:** **Permitted** (0% loss) under normal inter-VLAN routing policy.
 
-### 4.2 Blocked Traffic (ACL Enforcement)
-Verify that security policies drop prohibited traffic:
-
+#### 2. Security Enforcement: Blocked Departmental Access
 ```bash
-# 1. HQ: HR blocked from Finance (BLOCK_HR_TO_FINANCE)
+# HQ HR (192.168.1.100) -> HQ Finance (192.168.2.100)
 docker exec lab-pc-hq-hr ping -c 2 -W 1 192.168.2.100
-
-# 2. HQ: Finance blocked from Admin (BLOCK_FINANCE_TO_ADMIN)
-docker exec lab-pc-hq-finance ping -c 2 -W 1 192.168.4.100
-
-# 3. Branch 1: HR blocked from Finance (BLOCK_HR_TO_FINANCE_BR1)
-docker exec lab-pc-br1-hr ping -c 2 -W 1 192.168.12.100
-
-# 4. Branch 2: HR blocked from Finance (BLOCK_HR_TO_FINANCE_BR2)
-docker exec lab-pc-br2-hr ping -c 2 -W 1 192.168.22.100
 ```
-**Expected Result:** 100% packet loss (`2 packets transmitted, 0 packets received, 100% packet loss`).
+- **Status:** **Blocked** (100% loss) dropped by ACL `BLOCK_HR_TO_FINANCE`.
+- Inspect router drop counter:
+  ```bash
+  docker exec lab-hq iptables -L FORWARD -v -n | grep "192.168.2"
+  ```
 
 ---
 
-## 5. Automated Verification Script
+## 4. Live Traffic Generation & Wireshark Visualization
 
-Run the automated test suite that executes all OSPF checks, inter-branch ping matrices, HTTP portal verification, and ACL policy enforcement:
+### 4.1 Launching Wireshark
+
+You can view packets using either of two methods:
+
+#### Method A: Open the Active Capture File (Recommended for Demos)
+Open the pre-captured router traces in desktop Wireshark:
+```bash
+open -a Wireshark captures/branch1-all.pcap
+```
+> [!TIP]
+> Whenever you generate new traffic, simply press **`Cmd + R`** (or select **File $\to$ Reload**) in Wireshark to refresh and view newly arrived packets immediately!
+
+#### Method B: Real-Time Live Streaming into Wireshark GUI
+To stream packets in real-time into Wireshark as they happen:
+```bash
+docker exec lab-capture tcpdump -i any -U -w - | "/Applications/Wireshark.app/Contents/MacOS/Wireshark" -k -i -
+```
+
+---
+
+### 4.2 Generating Network Traffic
+
+Run the automated traffic generator script to send realistic enterprise traffic bursts across all sites:
+
+```bash
+./generate_traffic.sh
+```
+
+Alternatively, generate specific traffic flows manually:
+
+| Traffic Type | Command to Trigger | Description |
+|---|---|---|
+| **HTTP Intranet Request** | `docker exec lab-pc-br1-hr wget -qO- http://192.168.5.20` | Remote branch client pulls portal page from HQ server. |
+| **Inter-Branch Ping** | `docker exec lab-pc-hq-hr ping -c 4 192.168.21.100` | ICMP probe routed across point-to-point WAN links. |
+| **Blocked ACL Drop** | `docker exec lab-pc-hq-hr ping -c 3 -W 1 192.168.2.100` | Unauthorized cross-department probe dropped at gateway. |
+
+---
+
+### 4.3 The 4 Golden Wireshark Display Filters
+
+Apply these display filters in the green filter bar at the top of Wireshark:
+
+#### 1. HTTP 3-Way Handshake & GET Request
+- **Filter:** `http || tcp.port == 80`
+- **What to Dissect:**
+  - **TCP 3-Way Handshake:** Packet sequence `[SYN]`, `[SYN, ACK]`, `[ACK]`.
+  - **HTTP Request:** `GET / HTTP/1.1` from `192.168.11.100` to `192.168.5.20`.
+  - **HTTP Response:** `HTTP/1.1 200 OK (text/html)` delivering corporate portal HTML payload.
+
+#### 2. Cross-Branch Multi-Hop Ping
+- **Filter:** `icmp`
+- **What to Dissect:**
+  - `Echo (ping) request` and `Echo (ping) reply` packets.
+  - Expand **Internet Protocol Version 4**: Point out `Time to live: 62` (decremented by 2 router hops across the WAN).
+
+#### 3. Security ACL Drop Demonstration
+- **Filter:** `ip.dst == 192.168.2.100 || ip.dst == 192.168.12.100`
+- **What to Dissect:**
+  - Notice that **only incoming Echo Requests** appear on the ingress interface.
+  - **There are NO forwarded packets and NO Echo Replies**, proving that the router kernel dropped the unauthorized traffic at layer 3/4.
+
+#### 4. OSPF Dynamic Routing Control Traffic
+- **Filter:** `ospf`
+- **What to Dissect:**
+  - Destination IP: Multicast `224.0.0.5` (All OSPF Routers).
+  - Expand **Open Shortest Path First** header:
+    - **Router ID:** `3.3.3.3` (Branch 2) or `1.1.1.1` (HQ)
+    - **Area ID:** `0.0.0.0 (Backbone)`
+    - **Hello Interval:** `10 seconds`
+    - **Dead Interval:** `40 seconds`
+    - **Network Mask:** `255.255.255.252` (/30 WAN link)
+
+---
+
+## 5. Automated Verification Test Suite
+
+Conclude your demonstration by running the comprehensive automated test suite:
 
 ```bash
 ./test_connectivity.sh
 ```
 
-**Expected Summary:**
-`CONNECTIVITY & SECURITY DEMONSTRATION COMPLETE: ALL TESTS PASSED`
+**Expected Benchmark Output:**
+```
+====================================================================
+   CONNECTIVITY & SECURITY DEMONSTRATION COMPLETE: ALL TESTS PASSED   
+====================================================================
+```
+Validates:
+1. OSPF neighbor full convergence across all 3 routers.
+2. Cross-branch multi-host ping matrix.
+3. HQ central web server availability.
+4. Cisco Extended ACL isolation rules across all sites.
+5. Passive Wireshark packet capture file health.
 
 ---
 
----
+## 6. Visual Deliverables & Verification Screenshots
 
-## 6. Multi-Router Packet Capture & Wireshark Analysis
-
-Dedicated capture containers run in the network namespaces of all three routers and continuously write to the `./captures` directory:
-- **Headquarters Router (`lab-hq`)**: Captured by `lab-capture-hq` $\to$ `captures/hq-all.pcap`
-- **Branch 1 Router (`lab-br1`)**: Captured by `lab-capture` $\to$ `captures/branch1-all.pcap`
-- **Branch 2 Router (`lab-br2`)**: Captured by `lab-capture-br2` $\to$ `captures/branch2-all.pcap`
-
-### 6.1 Check Capture Files Status
-```bash
-ls -lh captures/
-```
-
-### 6.2 Inspect Protocol Breakdown (Protocol Hierarchy)
-```bash
-# Branch 1
-docker exec lab-capture tshark -r /captures/branch1-all.pcap -qz io,phs
-
-# Headquarters
-docker exec lab-capture-hq tshark -r /captures/hq-all.pcap -qz io,phs
-
-# Branch 2
-docker exec lab-capture-br2 tshark -r /captures/branch2-all.pcap -qz io,phs
-```
-
-### 6.3 Inspect OSPF Hello and Routing Control Traffic
-```bash
-docker exec lab-capture sh -c "tshark -r /captures/branch1-all.pcap -Y 'ospf' | head -n 10"
-```
-Or using tcpdump:
-```bash
-docker exec lab-capture tcpdump -nn -r /captures/branch1-all.pcap "proto 89" -c 10
-```
-
-### 6.4 Inspect HTTP Web Transactions (3-Way Handshake & GET Request)
-```bash
-docker exec lab-capture tcpdump -nn -r /captures/branch1-all.pcap "tcp port 80" -c 10
-```
-Or using tshark:
-```bash
-docker exec lab-capture sh -c "tshark -r /captures/branch1-all.pcap -Y 'tcp.port == 80' | head -n 10"
-```
-
-### 6.5 Observe ACL Drops in Capture
-When pinging from `lab-pc-br1-hr` to `192.168.12.100` (prohibited by ACL), inspect the capture:
-```bash
-docker exec lab-capture sh -c "tshark -r /captures/branch1-all.pcap -Y 'ip.dst == 192.168.12.100' | tail -n 5"
-```
-**Observation:** Only ICMP Echo Requests enter on the ingress interface; no forward or reply occurs because `iptables` FORWARD dropped the frame.
-
-### 6.6 Analyzing in Desktop Wireshark
-Open any of the three router capture files directly in desktop Wireshark:
-```bash
-# Open Headquarters Capture
-open -a Wireshark captures/hq-all.pcap
-
-# Open Branch 1 Capture
-open -a Wireshark captures/branch1-all.pcap
-
-# Open Branch 2 Capture
-open -a Wireshark captures/branch2-all.pcap
-```
-
-Recommended Wireshark display filters:
-- `ospf` (Displays OSPF Hellos, DB Description, LSR, LSU, LSAck)
-- `http` (Displays Intranet HTTP GET and 200 OK responses)
-- `icmp` (Displays ping requests, replies, and missing replies)
-- `ip.addr == 10.10.10.0/24` (WAN backbone traffic)
+All 10 project verification milestones have been captured at **2x Retina resolution** and documented with full technical descriptions:
+- **Visual Gallery:** [`screenshots/README.md`](../screenshots/README.md)
+- **Academic Report Checklist:** Section 8 of [`docs/REPORT.md`](REPORT.md#8-academic-submission-screenshot-checklist)
 
 ---
 
-## 7. Graceful Shutdown & Cleanup
+## 7. Anticipated Q&A & Technical Defense
 
-When demonstration is complete:
+| Likely Question | Confident Technical Answer |
+|---|---|
+| **"Why did you use `/30` subnets on the WAN?"** | *"`/30` allocates exactly 2 usable host addresses (`.1` and `.2`), which is standard enterprise practice for point-to-point links. It conserves IPv4 space and prevents unauthorized devices from attaching to the transit link."* |
+| **"Why single-area OSPF Area 0?"** | *"For a three-site network, single-area OSPF minimizes route convergence latency and administrative complexity. If the network expanded past 20 branches, remote sites would be segmented into Stub or Totally Stubby areas to suppress LSA flooding."* |
+| **"How does Equal-Cost Multi-Path (ECMP) work here?"** | *"When HQ routes traffic to the inter-branch WAN link `10.10.10.8/30`, the path through Branch 1 has metric 20 and through Branch 2 also has metric 20. Because metrics are equal, the routing engine installs both next-hops into the FIB for concurrent load balancing."* |
+| **"How are Cisco ACLs simulated in Docker?"** | *"Cisco IOS applies ACLs to router interfaces via `ip access-group in/out`. In Docker, the router containers enforce `iptables -A FORWARD` rules at the exact same layer 3/4 filtering boundary in the Linux kernel."* |
+| **"Why do client containers have static IPs instead of DHCP in the lab?"** | *"In the physical Packet Tracer topology (`.pkt`), DHCP relay (`ip helper-address 192.168.5.10`) is active. In Docker, container boot ordering is asynchronous; static IP assignment ensures deterministic startup without DHCP race conditions."* |
+
+---
+
+## 8. Graceful Shutdown & Cleanup
+
+When the demonstration is complete:
 
 ```bash
-# Stop all capture containers cleanly to flush buffers
+# Stop capture containers to flush buffers cleanly
 docker compose stop capture capture-hq capture-br2
 
-# Tear down all containers and networks
+# Tear down all containers and networks (optional)
 docker compose down
 ```
